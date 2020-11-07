@@ -1,0 +1,114 @@
+#!/bin/bash
+#set -x
+
+CAT_DEV=/dev/ttyCAT
+PTT_DEV=/dev/ttyPTT
+ARDOP_DIR=$HOME/Dropbox/ham/Winlink/ardop
+WINMOR_PORT=8500
+ARDOP_PORT=8515
+LOG_DIR=$HOME/Dropbox/ham/Winlink/logs
+RADIO_MODEL=313
+CAT_BAUD=19200
+PTT_CTRL=DTR
+
+usage() {
+  echo "usage: $0 [start_winmor, start_ardop, stop]"
+  exit
+}
+
+socket_pause() {
+  while ss -t |grep -e $WINMOR_PORT |grep -q FIN-WAIT
+  do
+    echo -n Waiting for socket to close ...
+    sleep 20
+    echo -n .
+  done
+  echo
+}
+
+start() {
+  #echo " --- Starting rigctld ---"
+  #rigctld -m $RADIO_MODEL -r $CAT_DEV -s $CAT_BAUD -p $PTT_DEV -P $PTT_CTRL -v >>$LOG_DIR/rigctld.log &
+  #sleep 2
+
+  case $1 in
+  winmor)
+    # Start Winmor TNC
+    echo " --- Starting Winmor TNC ---"
+    export WINEDEBUG=err,fixme-all
+    export WINEPREFIX=$HOME/prefix32
+    wine $WINEPREFIX/drive_c/RMS/Winmor\ TNC/Winmor\ TNC.exe &
+    sleep 2
+    ;;
+  ardop)
+    # Start ardopc
+    echo " --- Starting ardopc and ARDOP_GUI ---"
+    $ARDOP_DIR/ardopc $ARDOP_PORT ARDOP ARDOP -l $LOG_DIR &
+    sleep 1
+    $ARDOP_DIR/ARDOP_GUI &
+    sleep 2
+    ;;
+  esac
+
+  # Start Pat and listen to http
+  echo " --- Starting pat winlink client ---"
+  pat -l $1 http &
+  sleep 2
+
+  echo " --- Starting http client ---"
+  firefox --new-window http://localhost:8080 &
+  sleep 1
+  echo " ---------- Done -------- ---"
+
+  return
+}
+
+stop() {
+  # First close the Pat application window to release the client port session
+  wmctrl -c 'Pat - Mailbox'
+
+  # Then close the running listener
+  pid=$(ps -A |awk '/ pat$/ {print $1}')
+  if [[ "$pid" -ne "" ]]; then
+    kill -9 $pid
+  fi
+
+  pid=$(ps -A |awk '/ ardopc$/ {print $1}')
+  if [[ "$pid" -ne "" ]]; then
+    kill -9 $pid
+  fi
+
+  pid=$(ps -A |awk '/ ARDOP_GUI$/ {print $1}')
+  if [[ "$pid" -ne "" ]]; then
+    kill -9 $pid
+  fi
+
+  # Close WINMOR early
+  wmctrl -c WINMOR
+  pid=$(ps -A |awk '/Winmor TNC.exe/ {print $1}')
+  if [[ "$pid" -ne "" ]]; then
+    kill -9 $pid
+  fi
+
+  # Finally kill rigctld
+  # pkill -9 rigctld
+}
+
+
+case $1 in
+stop)
+  stop
+  ;;
+start_winmor)
+  stop
+  sleep 2
+  start winmor
+  ;;
+start_ardop)
+  stop
+  sleep 2
+  start ardop
+  ;;
+*) usage
+  ;;
+esac
